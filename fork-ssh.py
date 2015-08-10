@@ -1,7 +1,4 @@
 #!/usr/bin/env python
-# search chef for nodes and run concurrent
-# ssh commands across them
-
 import optparse
 import time
 import sys
@@ -10,26 +7,39 @@ import pssh
 
 parser = optparse.OptionParser()
 parser.add_option('--knife', '-k', default='~/.chef/knife.rb', action='store')
+parser.add_option('--log', '-l', action="store_true")
+parser.add_option('--log-dest', default='./', action='store', dest="log_dest")
 parser.add_option('--search', '-s', default='role:*', action='store')
+parser.add_option('--sudo', action="store_true", dest="sudo")
 parser.add_option('--command', '-c', default='uptime', action='store')
 parser.add_option('--sshpool', '-p', type='int', default=10, action='store')
 parser.add_option('--retries', '-r', type='int', default=3, action='store')
 
 options, remainder = parser.parse_args()
 
-api = chef.ChefAPI.from_config_file(options.knife)
-nodes = chef.Search('node', options.search)
+nodes = []
+try:
+    api = chef.ChefAPI.from_config_file(options.knife)
+    nodes = chef.Search('node', options.search)
+except Exception as e:
+    print e
+    sys.exit(1)
+
+if not len(nodes):
+    print "Search: '%s' did not return any results" % options.search
+    sys.exit(1)
 
 
 def log(output):
-    for host in output:
-        stdout = "\n".join(output[host]['stdout'])
-        stderr = "\n".join(output[host]['stderr'])
-        node_name = ip_to_fqdn(host)
-        f = open(node_name + '.log', 'w')
-        f.write(stderr)
-        f.write(stdout)
-        f.close()
+    if options.log:
+        for host in output:
+            stdout = "\n".join(output[host]['stdout'])
+            stderr = "\n".join(output[host]['stderr'])
+            node_name = ip_to_fqdn(host)
+            f = open(options.log_dest + "/" + node_name + '.log', 'w')
+            f.write(stderr)
+            f.write(stdout)
+            f.close()
 
 
 def ip_to_fqdn(host):
@@ -43,11 +53,7 @@ for h in nodes:
         print "%s has no ipaddress" % h.object.name
 
 failed_hosts = []
-errors = []
 for retry in xrange(options.retries):
-    errors = []
-    output = []
-
     run_hosts = hosts
     if failed_hosts:
         run_hosts = failed_hosts
@@ -55,13 +61,17 @@ for retry in xrange(options.retries):
     try:
         client = pssh.ParallelSSHClient(run_hosts, pool_size=options.sshpool)
     except pssh.ConnectionErrorException, e:
-        errors.append(e)
+        print e
         continue
 
+    output = []
     try:
-        output = client.run_command(options.command, sudo=True)
+        if options.sudo:
+            output = client.run_command(options.command, sudo=True)
+        else:
+            output = client.run_command(options.command, sudo=False)
     except pssh.ConnectionErrorException as e:
-        errors.append(e)
+        print e
         continue
 
     log(output)
@@ -77,15 +87,12 @@ for retry in xrange(options.retries):
         time.sleep(10)
     else:
         break
-
-if len(errors):
-    print errors
-    sys.exit(1)
  
 if failed_hosts:
     failed_nodes = []
     for failed in failed_hosts:
         failed_nodes.append(ip_to_fqdn(failed))
+
     print "Failed to run : %s on %s" % (options.command, ", ".join(failed_nodes))
     sys.exit(1)
 else:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import optparse
 import time
+import random
 import sys
 import chef
 import pssh
@@ -12,10 +13,16 @@ parser.add_option('--log-dest', default='./', action='store', dest="log_dest")
 parser.add_option('--search', '-s', default='role:*', action='store')
 parser.add_option('--sudo', action="store_true", dest="sudo")
 parser.add_option('--command', '-c', default='uptime', action='store')
+parser.add_option('--splay', type='int', action='store')
 parser.add_option('--sshpool', '-p', type='int', default=10, action='store')
 parser.add_option('--retries', '-r', type='int', default=3, action='store')
 
 options, remainder = parser.parse_args()
+
+command = options.command
+if options.splay:
+    splay = int(random.randrange(0, options.splay))
+    command = "sleep $((( RANDOM % " + str(splay) + ") + 1 )) ; " + options.command
 
 nodes = []
 try:
@@ -31,11 +38,11 @@ if not len(nodes):
 
 
 def log(output):
-    if options.log:
-        for host in output:
-            stdout = "\n".join(output[host]['stdout'])
-            stderr = "\n".join(output[host]['stderr'])
-            node_name = ip_to_fqdn(host)
+    for host in output:
+        stdout = "\n".join(output[host]['stdout'])
+        stderr = "\n".join(output[host]['stderr'])
+        node_name = ip_to_fqdn(host)
+        if options.log:
             f = open(options.log_dest + "/" + node_name + '.log', 'w')
             f.write(stderr)
             f.write(stdout)
@@ -52,6 +59,9 @@ for h in nodes:
     except:
         print "%s has no ipaddress" % h.object.name
 
+print "Executing command : %s" % command
+print "Hosts found with search : %s  , %s" % (options.search, len(nodes))
+
 failed_hosts = []
 for retry in xrange(options.retries):
     run_hosts = hosts
@@ -67,9 +77,9 @@ for retry in xrange(options.retries):
     output = []
     try:
         if options.sudo:
-            output = client.run_command(options.command, sudo=True)
+            output = client.run_command(command, sudo=True)
         else:
-            output = client.run_command(options.command, sudo=False)
+            output = client.run_command(command, sudo=False)
     except pssh.ConnectionErrorException as e:
         print e
         continue
@@ -93,7 +103,7 @@ if failed_hosts:
     for failed in failed_hosts:
         failed_nodes.append(ip_to_fqdn(failed))
 
-    print "Failed to run : %s on %s" % (options.command, ", ".join(failed_nodes))
+    print "Failed to run : %s on %s" % (command, ", ".join(failed_nodes))
     sys.exit(1)
 else:
     print "Success!"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 import optparse
 import time
 import random
@@ -23,6 +24,11 @@ command = options.command
 if options.splay:
     splay = int(random.randrange(0, options.splay))
     command = "sleep $((( RANDOM % " + str(splay) + ") + 1 )) ; " + options.command
+
+if not os.path.isfile(options.knife):
+    print "%s does not exist" % options.knife
+    sys.exit(1)
+
 
 nodes = []
 try:
@@ -60,10 +66,11 @@ for h in nodes:
         print "%s has no ipaddress" % h.object.name
 
 print "Executing command : %s" % command
-print "Hosts found with search : %s  , %s" % (options.search, len(nodes))
+print "Node(s) found: %s (%s)" % (len(nodes), options.search)
 
 failed_hosts = []
 for retry in xrange(options.retries):
+    print "Attempt %s" % retry
     run_hosts = hosts
     if failed_hosts:
         run_hosts = failed_hosts

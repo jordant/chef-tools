@@ -22,8 +22,7 @@ options, remainder = parser.parse_args()
 
 command = options.command
 if options.splay:
-    splay = int(random.randrange(0, options.splay))
-    command = "sleep $((( RANDOM % " + str(splay) + ") + 1 )) ; " + options.command
+    command = "sleep $((( RANDOM % " + str(options.splay) + ") + 1 )) ; " + options.command
 
 if not os.path.isfile(options.knife):
     print "%s does not exist" % options.knife
@@ -69,16 +68,22 @@ print "Executing command : %s" % command
 print "Node(s) found: %s (%s)" % (len(nodes), options.search)
 
 failed_hosts = []
-for retry in xrange(options.retries):
-    print "Attempt %s" % retry
+errors = []
+for retry in xrange(1, options.retries + 1):
+    errors = []
     run_hosts = hosts
     if failed_hosts:
+        print "failed hosts %s" % ", ".join(failed_hosts)
         run_hosts = failed_hosts
 
+    if errors:
+        print "errors %s" % errors
+
+    print "Attempt %s" % retry
     try:
         client = pssh.ParallelSSHClient(run_hosts, pool_size=options.sshpool)
     except pssh.ConnectionErrorException, e:
-        print e
+        errors.append(e)
         continue
 
     output = []
@@ -88,12 +93,13 @@ for retry in xrange(options.retries):
         else:
             output = client.run_command(command, sudo=False)
     except pssh.ConnectionErrorException as e:
-        print e
+        errors.append(e)
         continue
 
     log(output)
 
     failed_hosts = []
+    errors = []
     for host in output:
         exit_code = client.get_exit_code(output[host])
         if exit_code >= 1:
@@ -101,10 +107,14 @@ for retry in xrange(options.retries):
 
     # if we have failures, sleep then retry. if no failures, break
     if failed_hosts:
-        time.sleep(10)
+        time.sleep(5)
     else:
         break
- 
+
+if errors:
+    print "Errors: %s" % (errors)
+    sys.exit(1)
+
 if failed_hosts:
     failed_nodes = []
     for failed in failed_hosts:

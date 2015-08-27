@@ -6,6 +6,8 @@ import random
 import sys
 import chef
 import pssh
+from itertools import islice
+
 
 parser = optparse.OptionParser()
 parser.add_option('--knife', '-k', default='~/.chef/knife.rb', action='store')
@@ -29,99 +31,97 @@ if not os.path.isfile(options.knife):
     sys.exit(1)
 
 
-nodes = []
-try:
-    api = chef.ChefAPI.from_config_file(options.knife)
-    nodes = chef.Search('node', options.search)
-except Exception as e:
-    print e
-    sys.exit(1)
+def get_nodes_from_search():
+    nodes = {}
+    try:
+        api = chef.ChefAPI.from_config_file(options.knife)
+        search = chef.Search('node', options.search)
+        for h in search:
+            nodes[h.object.attributes['ipaddress']] = h.object.attributes['fqdn']
+    except Exception as e:
+        print e
 
-if not len(nodes):
-    print "Search: '%s' did not return any results" % options.search
-    sys.exit(1)
+    return nodes
 
 
-def log(output):
+def log(nodes, output):
     for host in output:
-        stdout = "\n".join(output[host]['stdout'])
-        stderr = "\n".join(output[host]['stderr'])
-        node_name = ip_to_fqdn(host)
         if options.log:
-            f = open(options.log_dest + "/" + node_name + '.log', 'w')
-            f.write(stderr)
-            f.write(stdout)
+            f = open(options.log_dest + "/" + nodes[host] + '.log', 'a')
+            f.write('STDOUT : \n')
+            f.write('\n'.join(output[host]['stdout']))
+            f.write('STDERR : \n')
+            f.write('\n'.join(output[host]['stderr']))
             f.close()
 
 
-def ip_to_fqdn(host):
-    return (n.object.attributes['fqdn'] for n in nodes if n.object.attributes['ipaddress'] == host).next()
+def chunks(data, SIZE=options.sshpool):
+    it = iter(data)
+    for i in xrange(0, len(data), SIZE):
+        yield {k: data[k] for k in islice(it, SIZE)}
 
-hosts = []
-for h in nodes:
-    try:
-        hosts.append(h.object.attributes['ipaddress'])
-    except:
-        print "%s has no ipaddress" % h.object.name
+
+def ips_to_fqdn(nodes, ips):
+    hosts = []
+    for ip in ips:
+        hosts.append(nodes[ip])
+    return hosts
+        
+
+def print_seperator():
+    print '=' * 75
+
+nodes = get_nodes_from_search()
 
 print "Executing command : %s" % command
 print "Node(s) found: %s (%s)" % (len(nodes), options.search)
 
-failed_hosts = []
-errors = []
-for retry in xrange(1, options.retries + 1):
-    errors = []
-    run_hosts = hosts
-    if failed_hosts:
-        print "failed hosts %s" % ", ".join(failed_hosts)
-        run_hosts = failed_hosts
+failed = []
+chunk_num = 0
+total_chunks = (len(nodes) / options.sshpool)
+for node_chunk in chunks(nodes, options.sshpool):
+    chunk_num += 1
+    host_ips = node_chunk.keys()
+    for retry in xrange(1, options.retries + 1):
+        if not len(host_ips):
+            break
+        print "Chunk %d of %d .. Attempt %d ... Hosts %s" % (chunk_num, total_chunks, retry, len(host_ips))
+        print "Hosts: (%s)" % ', '.join(ips_to_fqdn(node_chunk, host_ips))
+        print_seperator()
+        output = None
+        try:
+            client = pssh.ParallelSSHClient(host_ips,
+                                            pool_size=options.sshpool)
+            if options.sudo:
+                output = client.run_command(command, sudo=True)
+            else:
+                output = client.run_command(command, sudo=False)
+        except pssh.ConnectionErrorException as e:
+            print "SSH EXCEPTION: %s" % e
 
-    if errors:
-        print "errors %s" % errors
+        if output:
+            log(node_chunk, output)
+            for o in output:
+                exit_code = client.get_exit_code(output[o])
+                if exit_code == 0:
+                    host_ips.remove(o)
+                else:
+                    print "\tERROR: host: %s exit: %s" % (node_chunk[o], exit_code)
 
-    print "Attempt %s" % retry
-    try:
-        client = pssh.ParallelSSHClient(run_hosts, pool_size=options.sshpool)
-    except pssh.ConnectionErrorException, e:
-        errors.append(e)
-        continue
-
-    output = []
-    try:
-        if options.sudo:
-            output = client.run_command(command, sudo=True)
-        else:
-            output = client.run_command(command, sudo=False)
-    except pssh.ConnectionErrorException as e:
-        errors.append(e)
-        continue
-
-    log(output)
-
-    failed_hosts = []
-    errors = []
-    for host in output:
-        exit_code = client.get_exit_code(output[host])
-        if exit_code >= 1:
-            failed_hosts.append(host)
-
-    # if we have failures, sleep then retry. if no failures, break
-    if failed_hosts:
-        time.sleep(5)
+    if len(host_ips):
+        print "Failures (%s)" % ', '.join(ips_to_fqdn(node_chunk, host_ips))
+        for failed_ip in host_ips:
+            failed.append(failed_ip)
     else:
-        break
+        print "Complete"
 
-if errors:
-    print "Errors: %s" % (errors)
-    sys.exit(1)
 
-if failed_hosts:
-    failed_nodes = []
-    for failed in failed_hosts:
-        failed_nodes.append(ip_to_fqdn(failed))
+print_seperator()
 
-    print "Failed to run : %s on %s" % (command, ", ".join(failed_nodes))
+print failed
+if len(failed):
+    print "Failures (%s)" % ', '.join(ips_to_fqdn(nodes, failed))
     sys.exit(1)
 else:
     print "Success!"
-    sys.exit()
+    sys.exit(0)

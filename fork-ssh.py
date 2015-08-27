@@ -50,7 +50,7 @@ def log(nodes, output):
             f = open(options.log_dest + "/" + nodes[host] + '.log', 'a')
             f.write('STDOUT : \n')
             f.write('\n'.join(output[host]['stdout']))
-            f.write('STDERR : \n')
+            f.write('\nSTDERR : \n')
             f.write('\n'.join(output[host]['stderr']))
             f.close()
 

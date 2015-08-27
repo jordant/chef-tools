@@ -118,7 +118,6 @@ for node_chunk in chunks(nodes, options.sshpool):
 
 print_seperator()
 
-print failed
 if len(failed):
     print "Failures (%s)" % ', '.join(ips_to_fqdn(nodes, failed))
     sys.exit(1)

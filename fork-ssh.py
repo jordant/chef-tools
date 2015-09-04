@@ -78,7 +78,7 @@ print "Node(s) found: %s (%s)" % (len(nodes), options.search)
 
 failed = []
 chunk_num = 0
-total_chunks = (len(nodes) / options.sshpool)
+total_chunks = (len(nodes + 1) / options.sshpool)
 for node_chunk in chunks(nodes, options.sshpool):
     chunk_num += 1
     host_ips = node_chunk.keys()
